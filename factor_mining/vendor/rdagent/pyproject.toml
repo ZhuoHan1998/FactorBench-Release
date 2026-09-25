@@ -1,0 +1,132 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+  "setuptools",
+  "setuptools-scm",
+]
+
+[project]
+authors = [
+  {email = "xuyang1@microsoft.com", name = "MSRA-MIIC"},
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+]
+description = "Research & Development Agent"
+dynamic = [
+  "dependencies",
+  "optional-dependencies",
+  "version",
+]
+keywords = [
+  "Autonomous Agents",
+  "Large Language Models",
+  "Research and Development",
+]
+name = "rdagent"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+rdagent = "rdagent.app.cli:app"
+
+[project.urls]
+homepage = "https://github.com/microsoft/RD-Agent/"
+issue = "https://github.com/microsoft/RD-Agent/issues"
+
+[tool.coverage.report]
+fail_under = 80
+
+[tool.coverage.run]
+source = [
+  "rdagent",
+]
+
+[tool.isort]
+color_output = true
+profile = "black"
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_any_unimported = true
+disallow_untyped_defs = true
+enable_error_code = [
+  "ignore-without-code",
+]
+explicit_package_bases = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+ignore_missing_imports = true
+module = "llama"
+
+[tool.pytest.ini_options]
+addopts = "-l -s --durations=0"
+log_cli = true
+log_cli_level = "info"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+log_format = "%(asctime)s %(levelname)s %(message)s"
+markers = [
+  "offline: tests that do not require external API calls",
+]
+minversion = "6.0"
+norecursedirs = [
+  "workspace",
+]
+
+[tool.ruff]
+fix = true
+line-length = 120
+src = ["rdagent"]
+
+[tool.ruff.lint]
+ignore = [
+  # https://docs.astral.sh/ruff/rules/#pydocstyle-d
+  "ANN401",
+  "CPY001",
+  "D",
+  "ERA001",
+  "EXE002",
+  "FIX",
+  "INP001",
+  "PGH",
+  "PLR0913",
+  "PLR0917",
+  "S101",
+  "S301",
+  "T20",
+  "TC003",
+  "TD",
+]
+select = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"docs/conf.py" = ["INP001"]
+"test/*" = ["S101"]
+
+[tool.setuptools]
+packages = ["rdagent"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.dynamic.optional-dependencies]
+docs = {file = ["requirements/docs.txt"]}
+lint = {file = ["requirements/lint.txt"]}
+package = {file = ["requirements/package.txt"]}
+test = {file = ["requirements/test.txt"]}
+torch = {file = ["requirements/torch.txt"]} # some agent algorithms need torch.  pip install rdagent[torch]
+
+[tool.setuptools_scm]
+local_scheme = "no-local-version"
+version_scheme = "guess-next-dev"
+
+[tool.tomlsort]
+all = true
+in_place = true
+trailing_comma_inline_array = true

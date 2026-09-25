@@ -1,0 +1,86 @@
+# Requirements for runtime.
+pydantic-settings
+
+python-Levenshtein
+scikit-learn
+filelock
+loguru
+fire
+fuzzywuzzy
+openai
+litellm>=1.73  # to support `from litellm import get_valid_models`
+azure.identity
+pyarrow
+rich
+tqdm
+typer
+
+numpy # we use numpy as default data format. So we have to install numpy
+pandas # we use pandas as default data format. So we have to install pandas
+pandarallel # parallelize pandas
+matplotlib
+langchain
+langchain-community
+tiktoken
+pymupdf  # Extract shotsreens from pdf
+
+# PDF related
+pypdf
+azure-ai-formrecognizer
+
+# factor implementations
+tables
+
+# CI Fix Tool
+tree-sitter-python
+tree-sitter
+
+python-dotenv
+
+# infrastructure related.
+docker
+
+# crawler related
+webdriver-manager
+
+# demo related
+streamlit>=1.47  # to support  input_c.text_area(..., height="content", ...)
+plotly
+st-theme
+randomname
+flask
+flask-cors
+networkx
+
+# kaggle crawler
+selenium
+kaggle
+nbformat # also used for notebook conversion
+
+# tool
+setuptools-scm
+seaborn
+azure.ai.inference
+
+# data folder desc
+humanize
+genson
+
+# mlflow
+mlflow
+azureml-mlflow
+types-pytz
+
+# Agent
+pydantic-ai-slim[mcp,openai,prefect]==1.66.0
+nest-asyncio
+
+# visualize SFT train
+tensorboard     # tensorboard --logdir git_ignore_folder/RD-Agent_workspace
+prefect
+
+# HuggingFace datasets
+datasets
+
+# DuckDuckGo search
+duckduckgo-search

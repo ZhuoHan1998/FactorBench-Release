@@ -1,0 +1,55 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+  "setuptools",
+  "setuptools-scm",
+]
+
+[project]
+authors = [
+  {email = "tangzy27@mail2.sysu.edu.cn", name = "Ziyi Tang"},
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+]
+description = "Alpha Factor Mining Agent"
+dynamic = [
+  "dependencies",
+  "optional-dependencies",
+  "version",
+]
+keywords = [
+  "Autonomous Agents",
+  "Large Language Models",
+  "Research and Development",
+]
+name = "alphaagent"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+alphaagent = "alphaagent.app.cli:app"
+
+[project.urls]
+homepage = "https://github.com/microsoft/RD-Agent/"
+issue = "https://github.com/microsoft/RD-Agent/issues"
+
+[tool.setuptools]
+packages = ["alphaagent"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.dynamic.optional-dependencies]
+docs = {file = ["requirements/docs.txt"]}
+lint = {file = ["requirements/lint.txt"]}
+package = {file = ["requirements/package.txt"]}
+test = {file = ["requirements/test.txt"]}
+
+[tool.setuptools_scm]
+local_scheme = "no-local-version"
+version_scheme = "guess-next-dev"

@@ -1,0 +1,13 @@
+baostock==0.8.8
+gym==0.26.2
+matplotlib==3.3.4
+numpy==1.20.1
+pandas==1.2.4
+qlib==0.0.2.dev20
+sb3_contrib==2.0.0
+stable_baselines3==2.0.0
+torch==2.0.1
+shimmy==1.1.0
+fire
+openai==1.2.3
+num2words

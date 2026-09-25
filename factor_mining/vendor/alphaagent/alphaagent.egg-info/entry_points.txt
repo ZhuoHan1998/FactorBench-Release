@@ -1,0 +1,2 @@
+[console_scripts]
+alphaagent = alphaagent.app.cli:app

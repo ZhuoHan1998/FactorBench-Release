@@ -1,0 +1,2 @@
+[console_scripts]
+quantaalpha = quantaalpha.cli:app

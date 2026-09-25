@@ -1,0 +1,381 @@
+describe: # some template to describe some object
+  # exp is a template used fo
+  exp: |-
+    ## {{ heading | default('Best solution of previous exploration of the scenario') }}
+    {% if exp %}### Code
+    Here is the complete code of the solution.
+    {{ exp.experiment_workspace.all_codes }}
+
+    {% if exp.hypothesis is not none %}
+    ### Hypothesis for the experiment
+    the experiment is designed based on hypothesis: {{exp.hypothesis}}
+    {% endif %}
+
+    ### Results
+    {% if exp.result is none %}
+    There are no according evaluation results
+    {% else %}
+    Evaluated results on validation are:
+    {{ exp.result }}
+    {% if exp.format_check_result is not none %}
+    Submission format check result is:
+    {{ exp.format_check_result }}
+    {% endif %}
+    {% if exp.running_info.running_time is not none %}
+    Running time: {{ exp.running_info.running_time }} seconds
+    {% endif %}
+    {% endif %}
+
+    {% else %}No previous complete experiment available.
+    {% endif %}
+
+  feedback: |-
+    {% if exp_and_feedback and exp_and_feedback|length > 1 %}
+    ## {{heading | default('Previous trial and feedback')}}
+    {% if exp_and_feedback[0].hypothesis %}
+    The experiment is designed based on hypothesis: {{ exp_and_feedback[0].hypothesis }}
+    {% endif %}
+    Feedback decision: {{ exp_and_feedback[1].decision }}
+    {% if exp_and_feedback[1].code_change_summary  %}Code change summary: {{ exp_and_feedback[1].code_change_summary }}{% endif %}
+    Reason: {{ exp_and_feedback[1].reason }}
+    {% endif %}
+
+  trace: |-
+    {% if exp_and_feedback_list|length == 0 %}
+    No previous {% if type == "success" %}SOTA{% elif type == "failed" %}failed{% endif %} experiments available.
+    {% else %}
+    {% for exp_and_feedback in exp_and_feedback_list %}
+    ## Experiment Index: {{ loop.index }}
+    Target Problem: {{ exp_and_feedback[0].hypothesis.problem_desc }}
+    {% if not pipeline %}Chosen Component: {{ exp_and_feedback[0].hypothesis.component }}{% endif %}
+    Proposed Hypothesis: {{ exp_and_feedback[0].hypothesis.hypothesis }}
+    {% if exp_and_feedback[1].code_change_summary  %}Code Change Summary: {{ exp_and_feedback[1].code_change_summary }}{% endif %}
+    **Surpass Previous SOTA**: {{ exp_and_feedback[1].decision }}    
+    {% if exp_and_feedback[0].running_info.running_time is not none %}
+    Experiment Running Time: {{ (exp_and_feedback[0].running_info.running_time ) | round(1) }} seconds
+    {% endif %}
+    {% if exp_and_feedback[0].result is none %}
+    Experiment Score: Running buggy
+    Experiment Error: {{ exp_and_feedback[1].reason }}
+    {% else %}
+    Experiment Score: {{ exp_and_feedback[0].result.loc["ensemble"].iloc[0] }}
+    Experiment Feedback: {{ exp_and_feedback[1].reason }}
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+
+scen:  # customizable
+  role: |-
+    You are a Kaggle Grandmaster and expert ML engineer with deep expertise in statistics, machine learning, and competition optimization.
+  input_path: "./workspace_input/"
+  cache_path: "./workspace_cache/"
+
+component_description:
+  DataLoadSpec: |-
+    Loads raw competition data, ensuring proper data types, and providing an exploratory data analysis summary.
+    - When focusing on this component, the corresponding editing files will be: "load_data.py"
+  FeatureEng: |-
+    Transforms raw data into meaningful features while maintaining shape consistency, avoiding data leakage, and optimizing for model performance.
+    It should be model-agnostic (data transformations/augmentations that apply only to specific model frameworks should not be included here).
+    Ensure that any changes you suggest for feature engineering can be implemented without altering the model's code. If the changes require modifications to the model's code, they are considered specific to the model. We should focus on the model component to apply these changes.
+    - When focusing on this component, the corresponding editing files will be: "feature.py"
+  Model: |-
+    Perform one of three tasks: model building, which develops a model to address the problem; model tuning, which optimizes an existing model for better performance; or model removal, which discards models that do not contribute effectively.
+    Handle data operations or augmentations that are
+    1) closely tied to the model framework, such as tools (e.g., PyTorch's Datasets & DataLoaders) provided by PyTorch or TensorFlow.
+    2) cannot be applied in feature engineering ("feature.py") without modifying the model code.
+    - When focusing on this component, the corresponding editing files will be: "model_*.py"
+  Ensemble: |-
+    Combines predictions from multiple models using ensemble strategies, evaluates their performance, and generates the final test predictions.
+    - When focusing on this component, the corresponding editing files will be: "ensemble.py"
+  Workflow: |-
+    Integrates all pipeline components, from data loading to ensemble prediction, ensuring efficient execution and correct output formatting.
+    - When focusing on this component, the corresponding editing files will be: "main.py"
+
+component_description_in_pipeline: |-
+  [DataLoadSpec]: Focus on the data loading and preprocessing aspects of the pipeline, ensuring that the data is correctly formatted and ready for feature engineering.
+  [FeatureEng]: Concentrate on transforming the raw data into meaningful features while maintaining the integrity of the dataset.
+  [Model]: Focus on the model building, tuning of the pipeline, ensuring that the model is optimized for performance.
+  [Ensemble]: Concentrate on combining predictions from multiple models and evaluating their performance.
+  [Workflow]: Focus on the overall integration of the pipeline or parts not included in the other components, ensuring that all components work together seamlessly.
+
+component_spec:
+  general: |-
+    {{ spec }}
+
+    Your code will be tested by the code below. You must ensure your implementation passes the test code:
+    ```python
+    {{ test_code }}
+    ```
+  DataLoadSpec: |-
+    1. File Handling:
+      - Handle file encoding and delimiters appropriately.
+      - Combine or process multiple files if necessary.
+      - Avoid using the sample submission file to infer test indices. If a dedicated test index file is available, use that. If not, use the order in the test file as the test index.
+      - If each prediction sample is linked to a file on disk, simply load the file paths (please load the full path to make it easier to write the loader in following workflows) as X/features without any additional processing.
+
+    2. Data Preprocessing:
+      - Convert data types correctly (e.g., numeric, categorical, date parsing).
+      - Optimize memory usage for large datasets using techniques like downcasting or reading data in chunks if necessary.
+      - Domain-Specific Handling: 
+        - Apply competition-specific preprocessing steps as needed (e.g., text tokenization, image resizing).
+        - Instead of returning binary bytes directly, convert/decode them into more useful formats like numpy.ndarrays.
+
+    3. Code Standards:
+      - DO NOT use progress bars (e.g., `tqdm`).
+      - DO NOT use the sample submission file to extract test index information.
+      - DO NOT exclude features inadvertently during this process.
+
+    4. Exploratory Data Analysis (EDA) [Required]:
+      - Before returning the data, you should always add an EDA part describing the data to help the following steps understand the data better.
+      - The EDA part should be drafted in plain text with certain format schema with no more than ten thousand characters.
+      - An evaluation agent will help to check whether the EDA part is added correctly.
+
+    5. NOTES
+      - Never use sample submission as the test index, as it may not be the same as the test data. Use the test index file or test data source to get the test index.
+
+  FeatureEng: |-
+    1. Well handle the shape of the data
+      - The sample size of the train data and the test data should be the same in all scenarios.
+      - To some tabular or time-series data, you may add or remove some columns so your inferred column number may be unsure.
+      - For scenarios where each dimension does not have a special meaning (like image, audio, and so on), the input shape and the output shape should be exactly the same in most cases unless there is a compelling reason to change them.
+
+    2. Integration with the Model Pipeline:
+      - If feature engineering is deferred to the model pipeline for better overall performance, state explicitly that it will be handled at the model stage.
+        - Model-related operations should not be implemented in this step. (e.g., it uses tools combined with models like torch.Dataset with rich data transformation/augmentation)
+      - Otherwise, ensure this function applies all required transformations while avoiding data leakage.
+
+    3. General Considerations:
+      - Ensure scalability for large datasets.
+      - Handle missing values and outliers appropriately (e.g., impute, remove, or replace).
+      - Ensure consistency between feature data types and transformations.
+      - Prevent data leakage: Do not use information derived from the test set when transforming training data.
+
+    4. Code Standards:
+      - Avoid using progress bars (e.g., `tqdm`) in the implementation.          
+
+    5. Notes:
+      - GPU and multiprocessing are available and are encouraged to use for accelerating transformations.
+      - Feature engineering should be executed **once** and reused across all models to ensure consistency: `X_transformed, y_transformed, X_test_transformed = feat_eng(X, y, X_test)`
+      - If the data loader returns the file path directly, we can skip feature engineering and return original values directly.
+  
+  Model: |-
+    - Do not use progress bars (e.g., `tqdm`) in the implementation.
+    - The device has GPU support, so you are encouraged to use it for training if necessary to accelerate the process.
+    - Some data transformations/augmentations can be included in this step (e.g., data tools provided by TensorFlow and Torch)
+      - Please correctly handle data transformations/augmentations, especially when the dataloader loads the file path directly.
+    - Ensure dynamic handling of feature dimensions to accommodate potential enhancements in input features without requiring code modifications.
+  
+  Ensemble: |-
+    1. Input Validation:
+      - Handle empty or invalid inputs gracefully with appropriate error messages.
+
+    2. Metric Calculation and Storage:
+      - Calculate the metric (mentioned in the evaluation section of the competition information) for each model and ensemble strategy on valid, and save the results in `scores.csv`, e.g.:
+      ```python
+      scores = {}
+      for model_name, val_pred in val_preds_dict.items():
+          scores[model_name] = calculate_metric(val_label, val_pred)
+      
+      ...
+      some code about ensemble strategy
+      ...
+      ensemble_val_pred = ...
+
+      ensemble_score = calculate_metric(val_label, ensemble_val_pred)
+      scores["ensemble"] = ensemble_score  # Ensure "ensemble" is explicitly stored
+      
+      scores_df = pd.DataFrame(scores.items(), columns=["Model", <metric_name>])
+      scores_df.to_csv("scores.csv", index=False)
+      ```
+      - Even if only one model is present, compute the ensemble score and store it under `"ensemble"`.
+
+    3. Code Standards:
+      - Do not use progress bars (e.g., tqdm) in the code.
+
+    4. Notes:
+      - Ensure flexibility to handle multiple ensemble strategies based on competition requirements.
+    
+  Workflow: |-
+    Your task is to implement the main workflow script (`main.py`) for a Kaggle-style machine learning competition project. 
+    Follow the provided project structure and specifications to ensure consistency and maintainability:
+    1. Workflow Integration:
+      - Integrate the following components into the workflow:
+        - Data loading (`load_data.py`).
+        - Feature engineering (`feature.py`).
+        - Model workflow for training and testing (`model_*.py`). 
+        - Ensemble workflow that combines results from the model workflow to obtain the final prediction (`ensemble.py`).
+      - Treat each component as a modular and callable Python function.
+      - The workflow script should be flexible enough to handle either a single model or multiple models, with filenames (model_*.py) that are not determined at the outset.
+        For multiple model selection, utilize Python code to identify eligible models based on filenames, for example:
+        ```python
+        available_models = [f for f in os.listdir('.') if f.startswith('model_') and 'test' not in f]
+        ```
+      - The workflow script should be directly executable. We will run your script as is, so do not assume that your functions will be imported and called separately.
+    2. Feature Engineering
+      - The feature engineering should be called only once. For example:
+        `X_transformed, y_transformed, X_test_transformed = feat_eng(X, y, X_test)`
+      - It should be called before dataset splitting.
+
+    3. Dataset Splitting
+      - The dataset returned by `load_data` is not pre-split. After calling `feat_eng`, split the data into training and test sets.
+      - [Notice] If feasible, apply cross-validation on the training set (`X_transformed`, `y_transformed`) to ensure a reliable assessment of model performance.
+      - Keep the test set (`X_test_transformed`) unchanged, as it is only used for generating the final predictions.
+      - Pseudocode logic for reference:
+        ```
+        Set number of splits and initialize KFold cross-validator.
+        Create dictionaries for validation and test predictions.
+        For each model file:
+            Import the model dynamically.
+            Initialize arrays for out-of-fold (OOF) and test predictions.
+            For each fold in KFold:
+                Split data into training and validation sets.
+                Run model workflow to get validation and test predictions.
+                Validate shapes.
+                Store validation and test predictions.
+            Compute average test predictions across folds.
+            Save OOF and averaged test predictions.
+        Ensemble predictions from all models and print the final shape.
+        ```
+
+    4. Submission File:
+      - Save the final predictions as `submission.csv`, ensuring the format matches the competition requirements as detailed in the '====== Submission Format ======' section of the Competition Information (DO NOT read the sample_submission.csv file directly in the code).
+      - Present the required submission format explicitly and ensure the output adheres to it.
+
+    5. Code Standards:
+      - Do not use progress bars (e.g., tqdm) in the code.
+
+    6. Ensemble Strategy:
+      Consolidate all model outputs into a dictionary, where each key is the model's filename (excluding the .py extension) and its corresponding value is the model's output.
+      Sample code:
+      {% raw %}
+      {% for model_name in model_names %}
+      model_module = __import__(model_name.replace('.py', ''))
+      val_pred, test_pred, _ = model_module.model_workflow(
+        X=train_X,
+        y=train_y,
+        val_X=val_X,
+        val_y=val_y,
+        test_X=X_test_transformed
+      )
+      val_preds_dict[model_module.__name__] = val_pred
+      test_preds_dict[model_module.__name__] = test_pred
+      {% endfor %}
+      final_pred = ensemble_workflow(test_preds_dict, val_preds_dict, val_y)
+      {% endraw %}
+    
+  Pipeline: |-
+    1. Program Execution:
+      - The workflow will be executed by running `python main.py` with no command-line arguments. Ensure that `main.py` does not require or expect any parameters.
+      - The working directory will only contain `main.py`. Any additional files required for execution must be downloaded or generated by `main.py` itself.
+      {% if enable_notebook_conversion %}
+      - Code should be modular and organized into functions, with a clear main() function that orchestrates the workflow.
+        - Inside the main() function, divide the code into sequential sections.
+          - Each section must follow this exact pattern:
+            - A print statement announcing the section, e.g. print("Section: <Descriptive Name>")
+            - 1–2 lines of comments explaining the purpose of the section
+            - The block of code for that section
+          - Example:
+            ```python
+            <any helper code, imports, function definitions>
+
+            def main():
+                print("Section: Data Loading")
+                # Load dataset from CSV into a DataFrame
+                # Handle missing values
+                <code for this section>
+
+                print("Section: Feature Engineering")
+                # Generate new features from raw data
+                # Normalize and encode categorical variables
+                <code for this section>
+
+                <rest of function>
+
+            <any helper code>
+
+            if __name__ == "__main__":
+                main()
+            ```
+        - Section headers must always be print("Section: <name>") at the top level of main().
+          - Do not put them inside if/else blocks.
+          - Do not put them inside helper functions.
+          - Do not put them outside of the main() function.
+        - Do not add comments or dividers before the print statement — comments must come after the print line.
+        - Section names should be concise and descriptive (e.g., "Data Loading", "Model Training").
+        - Do not call return or exit in the middle of the main() function. Raise an exception if you need to stop execution early.
+      {% endif %}
+
+    2. File Handling:
+      - Handle file encoding and delimiters appropriately.
+      - Combine or process multiple files if necessary.
+      - Avoid using the sample submission file to infer test indices. If a dedicated test index file is available, use that. If not, use the order in the test file as the test index.
+      - Ensure you load the actual data from the files, not just the filenames or paths. Do not postpone data loading to later steps.
+
+    3. Data Preprocessing:
+      - Convert data types correctly (e.g., numeric, categorical, date parsing).
+      - Optimize memory usage for large datasets using techniques like downcasting or reading data in chunks if necessary.
+      - Domain-Specific Handling: 
+        - Apply competition-specific preprocessing steps as needed (e.g., text tokenization, image resizing).
+
+    4. Code Standards:
+      - DO NOT use progress bars (e.g., `tqdm`).
+      - **CRITICAL: DO NOT read, load, or access the sample_submission.csv file in the code. Extract column names and format requirements from the '====== Submission Format ======' section in the # Competition Information instead.**
+      - DO NOT exclude features inadvertently during this process.
+
+    5. NOTES
+      - Never use sample submission as the test index, as it may not be the same as the test data. Use the test index file or test data source to get the test index.
+
+    6. General Considerations:
+      - Ensure scalability for large datasets.
+      - Handle missing values and outliers appropriately (e.g., impute, remove, or replace).
+      - Ensure consistency between feature data types and transformations.
+      - Prevent data leakage: Do not use information derived from the test set when transforming training data.
+      - Sampling a subset of the training data for efficiency (e.g., randomly selecting a portion of the data) is discouraged unless it demonstrably improves performance (e.g., removing irrelevant or outlier samples).
+
+    7. Notes:
+      - GPU and multiprocessing are available and are encouraged to use for accelerating transformations.
+  
+    8. Metric Calculation and Storage:
+      - Calculate the metric (mentioned in the evaluation section of the competition information) for each model and ensemble strategy on valid, and save the results in `scores.csv`
+      - The evaluation should be based on k-fold cross-validation but only if that's an appropriate evaluation for the task at hand. Store the mean validation score of k-fold cross-validation in `scores.csv` on each model. Refer to the hyperparameter specification for rules to set the CV folds.
+      - Even if only one model is present, compute the ensemble score and store it under `"ensemble"`.
+      - The index of `scores.csv` should include the model name and the "ensemble" strategy. "ensemble" should be exactly in the index with all lower case letters (CASE-SENSITIVE). Ensemble is the result from several models. If only one model is present, the ensemble score should be the same as the model score.
+      - The column names in `scores.csv` should be ["{{ metric_name }}"] where metric_name is the name of the metric used for evaluation. Only one column is required. The column name should be exactly the same as "{{ metric_name }}" (CASE-SENSITIVE) since user will use it to pick the result.
+      - Validation metrics should be aligned across all ideas and implementations. Avoid proposing ideas that might affect the validation metrics and modifying the related code.
+
+    9. Submission File:
+      - Save the final predictions as `submission.csv`, ensuring the format matches the competition requirements as detailed in the '====== Submission Format ======' section of the Competition Information (DO NOT read the sample_submission.csv file directly in the code).
+      - Present the required submission format explicitly and ensure the output adheres to it.
+    
+    10. Preferred Packages:
+      - You can choose the most proper packages to achieve the task.
+      - When facing a choice between two packages which both can achieve the same goal, you should choose the one which is more commonly used and less likely to cause bugs in coding. Especially those you are not familiar with.
+      - For GBDT models, prefer XGBoost or RandomForest over LightGBM unless the SOTA or hypothesis dictates otherwise.
+      - To use GPU in training, always implement a check to ensure that the GPU is available and use it if possible. Fallback to CPU if GPU is not available. Especially in GBDT models, you might get error when you call `fit` method without checking the GPU availability. Add a try except block to handle this case.
+      - For neural networks, prefer PyTorch or PyTorch based library (over TensorFlow) unless the SOTA or hypothesis dictates otherwise.
+      - For neural networks, prefer fine-tuning pre-trained models over training from scratch.
+
+guidelines:
+  coding: |-
+    You might receive exploratory data analysis (EDA) details about the source data. **Do not use this EDA information to create assertions, hard-coded values, or raise errors.** We might generate sample data for quick coding (so your code may run on sample data which is part of the full-size data), but remember that the EDA details are based on the full-size data.
+
+spec:
+  hyperparameter: |-
+    1. Hyperparameters Requiring Tuning (e.g., learning rate, weight decay, optimizer, etc.)
+      - Adjust conservatively to avoid instability.
+      - Apply a systematic hyperparameter tuning strategy to identify optimal values.
+    2. Hyperparameters Dependent on Empirical Estimation or Past Failures (e.g., batch size, patience, epochs, etc.)
+      - Estimate these parameters based on the resource constraints (e.g. run time limit) or experiences from previous experiment failures.
+    3. Balancing Epochs and CV Folds
+      - When run time permit, prioritize increasing the number of training epochs, but always implement early stopping to prevent overfitting and ensure the process completes within the allowed runtime.
+      - When run time constrained, first reduce the number of CV folds—provided that validation reliability remains acceptable—before lowering the number of epochs.
+    4. Early Stopping Strategy
+      - Always implement an early stopping mechanism to prevent overfitting and ensure the process completes within the allowed runtime.
+      - Stop training if one or more of the following conditions are met:
+        - A minimum number of epochs have been completed and no improvement is observed in the monitored metric for a specified patience period.
+        - The validation loss (or metric) reaches a predefined threshold indicating sufficient model performance.
+        - The validation loss (or metric) remains stable (i.e., does not improve) for a set number of consecutive epochs.
+      - Clearly document the early stopping criteria and ensure they are configurable via hyperparameters.
+    5. Print necessary information to stdout to support future optimization and hyperparameter tuning.
+      - If validation data are used, print the early stopping round/step, as well as the training and validation losses during training.

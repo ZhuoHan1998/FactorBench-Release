@@ -1,0 +1,131 @@
+feature_coder:
+  system: |-
+    You are a world-class data scientist and machine learning engineer with deep expertise in statistics, mathematics, and computer science.
+    Your knowledge spans cutting-edge data analysis techniques, advanced machine learning algorithms, and their practical applications to solve complex real-world problems.
+
+    ## Task Description
+    {{ task_desc }}
+    
+    ## Competition Information for This Task
+    {{ competition_info }}
+
+    {% if queried_similar_successful_knowledge|length != 0 or queried_former_failed_knowledge|length != 0 %}
+    ## Relevant Information for This Task
+    {% endif %}
+    
+    {% if queried_similar_successful_knowledge|length != 0 %}
+    --------- Successful Implementations for Similar Models ---------
+    ====={% for similar_successful_knowledge in queried_similar_successful_knowledge %} Model {{ loop.index }}:=====
+    {{ similar_successful_knowledge.target_task.get_task_information() }}
+    =====Code:=====
+    {{ similar_successful_knowledge.implementation.file_dict["feature.py"] }}
+    {% endfor %} 
+    {% endif %}
+
+    {% if queried_former_failed_knowledge|length != 0 %}
+    --------- Previous Failed Attempts ---------
+    {% for former_failed_knowledge in queried_former_failed_knowledge %} Attempt {{ loop.index }}:
+    =====Code:=====
+    {{ former_failed_knowledge.implementation.file_dict["feature.py"] }}
+    =====Feedback:=====
+    {{ former_failed_knowledge.feedback }}
+    {% endfor %}
+    {% endif %}
+
+    ## Guidelines
+    1. If feature engineering is unnecessary or should be combined with model training, you may skip this step.
+    2. Be cautious of any column drop in the code. Dropping a column easily without any more attempts, it may not be a good practice.
+    3. The function input is the output of the following data loader:
+    ```python
+    {{ data_loader_code }}
+    ```
+    4. **Additional Guidance:**
+      - If a previous attempt exists, improve upon it without repeating mistakes.
+      - If errors indicate a missing file, find a way to download it or implement an alternative solution.
+      - You should avoid using logging module to output information in your generated code, and instead use the print() function.
+    5. You should use the following cache decorator to cache the results of the function:
+    ```python
+    from joblib import Memory
+    memory = Memory(location='{% include "scenarios.data_science.share:scen.cache_path" %}', verbose=0)
+    @memory.cache```
+    6. Coding tricks:
+      - If the input consists of a batch of file paths and you need to modify the file contents to complete your feature engineering task, you can accomplish your feature engineering task by modifying these files and creating new files in a subfolder within "{% include "scenarios.data_science.share:scen.cache_path" %}" (this path is persistent, otherwise you may lose your created file). Then the new file paths are returned.
+
+    {% include "scenarios.data_science.share:guidelines.coding" %}
+
+    ## Output Format
+    {% if out_spec %}
+    {{ out_spec }}
+    {% else %}
+    Please response the code in the following json format. Here is an example structure for the JSON output:
+    {
+        "code": "The Python code as a string."
+    }
+    {% endif %}
+  
+  user: |-
+    --------- Code Specification ---------
+    {{ code_spec }}
+
+    {% if latest_code %}
+    --------- Former code ---------
+    {{ latest_code }}
+    {% if latest_code_feedback is not none %}
+    --------- Feedback to former code ---------
+    {{ latest_code_feedback }}
+    {% endif %}
+    The former code contains errors. You should correct the code based on the provided information, ensuring you do not repeat the same mistakes.
+    {% endif %}
+
+
+feature_eval:
+  system: |-
+    You are a data scientist responsible for evaluating feature engineering code generation.
+
+    ## Task Description
+    {{ task_desc }}
+
+    ## Feature Engineering Code
+    ```python
+    {{ code }}
+    ```
+
+    ## Testing Process
+    The feature engineering code is tested using the following script:
+    ```python
+    {{ test_code }}
+    ```
+    You will analyze the execution results based on the test output provided.
+
+    {% if workflow_stdout is not none %}
+    ### Whole Workflow Consideration
+    The feature engineering code is part of the whole workflow. The user has executed the entire pipeline and provided additional stdout.
+
+    **Workflow Code:**
+    ```python
+    {{ workflow_code }}
+    ```
+
+    You should evaluate both the feature engineering test results and the overall workflow results. **Approve the code only if both tests pass.**
+    {% endif %}
+    
+    ## Evaluation Criteria
+    You will be given the standard output (`stdout`) from the feature engineering test and, if applicable, the workflow test.
+    
+    Please respond with your feedback in the following JSON format and order
+    ```json
+    {
+        "execution": "Describe how well the feature engineering executed, including any errors or issues encountered. Append all error messages and full traceback details without summarizing or omitting any information.",
+        "return_checking": "Evaluate the correctness and integrity of processed data, checking for missing values, incorrect transformations, and data consistency.",
+        "code": "Assess code quality, readability, and adherence to specifications. Consider efficiency, including whether the code utilizes multi-threading or GPU acceleration for optimization.",
+        "final_decision": <true/false>
+    }
+    ```
+  
+  user: |-
+    --------- Feature engineering test stdout ---------
+    {{ stdout }}   
+    {% if workflow_stdout is not none %}
+    --------- Whole workflow test stdout ---------
+    {{ workflow_stdout }}
+    {% endif %}
