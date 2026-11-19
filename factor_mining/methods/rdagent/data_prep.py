@@ -22,6 +22,7 @@ import pandas as pd
 
 from factor_bench.data import DEFAULT_SPLIT, load_panel
 from factor_bench.data.schema import FIELDS
+from factor_bench.paths import panel_derived_dir
 
 # Last two years of the train segment, mirroring the official 2-year debug slice.
 _DEBUG_START = "2020-01-01"
@@ -44,9 +45,11 @@ must stay within each instrument; cross-sectional operations group by datetime.
 def prepare_data_folders(
     # Shared per-market cache, deliberately outside the per-run directories
     # (out/mining/rdagent/<market>_<loops>_<seed>) so runs reuse one copy.
-    market: str, base_dir: str | Path = "out/mining/rdagent/data"
+    market: str, base_dir: str | Path | None = None
 ) -> tuple[Path, Path]:
     """Write full + debug data folders for one market. Returns their paths."""
+    if base_dir is None:
+        base_dir = panel_derived_dir("out/mining/rdagent/data", "rdagent")
     panel = load_panel(market)[list(FIELDS)]
     panel.index = panel.index.rename(["datetime", "instrument"])
 

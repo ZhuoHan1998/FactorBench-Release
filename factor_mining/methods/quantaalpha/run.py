@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import time
+from datetime import datetime
 from pathlib import Path
 
 import fire
@@ -145,8 +146,43 @@ def _patch_darwin_symlink() -> None:
     FBWorkspace.link_all_files_in_folder_to_workspace = staticmethod(_link_all)
 
 
+def _stash_leftover_library(library_path: Path, out_root: Path) -> None:
+    """Move a library left behind by an earlier process out of the run's way.
+
+    The official library manager loads ``all_factors_library_<suffix>.json`` and
+    appends to it; only a clean harvest moves it out of the vendored tree. A run
+    that was killed, or one from an earlier sweep, therefore leaves factors that
+    the next run with the same market and seed would otherwise inherit.
+    """
+    if not library_path.exists():
+        return
+    target = out_root / f"{library_path.stem}.leftover_{datetime.now():%Y%m%dT%H%M%S}.json"
+    shutil.move(str(library_path), target)
+    print(f"[quantaalpha] WARNING: moved a leftover factor library to {target}")
+
+
+def _library_entries_since(library: dict, since: datetime) -> tuple[list[dict], int, int]:
+    """Entries the library manager created at or after ``since``.
+
+    Returns (kept, dropped_older, undated). ``created_at`` is the manager's own
+    naive local timestamp; ``since`` must be naive local time on the same host.
+    Undated entries are kept and counted so they stay visible.
+    """
+    kept, dropped, undated = [], 0, 0
+    for entry in (library.get("factors") or {}).values():
+        created = (entry.get("metadata") or {}).get("created_at")
+        if not created:
+            undated += 1
+            kept.append(entry)
+        elif datetime.fromisoformat(str(created)) >= since:
+            kept.append(entry)
+        else:
+            dropped += 1
+    return kept, dropped, undated
+
+
 def _harvest(out_root: Path, market: str, seed: int, suffix: str, budget: dict,
-             wall: float) -> Path:
+             wall: float, since: datetime) -> Path:
     factors: list[ExpressionFactor] = []
     library_path = _VENDOR_FACTORLIB / f"all_factors_library_{suffix}.json"
     if library_path.exists():
@@ -154,7 +190,12 @@ def _harvest(out_root: Path, market: str, seed: int, suffix: str, budget: dict,
         target_path = out_root / library_path.name
         shutil.move(str(library_path), target_path)
         library = json.loads(target_path.read_text())
-        for entry in (library.get("factors") or {}).values():
+        entries, dropped, undated = _library_entries_since(library, since)
+        if dropped or undated:
+            print(f"[quantaalpha] WARNING {out_root.name}: dropped {dropped} factors created "
+                  f"before this run started; kept {undated} undated factors")
+        budget = {**budget, "leftover_factors_dropped": dropped}
+        for entry in entries:
             expression = entry.get("factor_expression")
             if not expression:
                 continue
@@ -214,9 +255,11 @@ def run_quantaalpha(
     out_dir: str = "out/mining",
 ) -> Path:
     t0 = time.time()
+    started = datetime.fromtimestamp(t0)
     suffix = f"{market}_s{seed}"
     out_root = (Path(out_dir) / "quantaalpha" / f"{market}_{max_rounds}_{seed}").resolve()
     out_root.mkdir(parents=True, exist_ok=True)
+    _stash_leftover_library(_VENDOR_FACTORLIB / f"all_factors_library_{suffix}.json", out_root)
     full_dir, debug_dir = prepare_data_folders(market)
     _setdefault_env(market, out_root, full_dir, debug_dir, suffix)
 
@@ -244,7 +287,7 @@ def run_quantaalpha(
     try:
         quantaalpha_main(direction=direction, config_path=str(config_path))
     finally:
-        path = _harvest(out_root, market, seed, suffix, budget, time.time() - t0)
+        path = _harvest(out_root, market, seed, suffix, budget, time.time() - t0, started)
         print(f"[quantaalpha] factors -> {path}")
     return out_root / "factors.json"
 

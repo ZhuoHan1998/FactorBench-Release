@@ -46,6 +46,55 @@ def segment_metrics(
     return out
 
 
+def long_short_horizon_metrics(
+    signal: pd.Series,
+    forward_return: pd.Series,
+    start: str,
+    end: str,
+    horizon: int,
+    quantile: float = 0.2,
+    min_names: int = 10,
+) -> dict[str, float]:
+    """Top-minus-bottom quantile portfolio held for ``horizon`` trading days.
+
+    ``forward_return`` must be the ``horizon``-day forward return (the shared
+    target), so each formation date's spread is what that portfolio earned over
+    its holding period. Formation dates inside ``[start, end]`` are taken every
+    ``horizon`` trading days, so holding periods do not overlap and each is
+    counted once; annualisation uses ``252 / horizon`` periods per year.
+
+    Used by the LLM-agent adapters to fill the official "excess return" feedback
+    slots on the same horizon as the IC they are scored on, rather than on
+    next-day returns. Returns NaN-free zeros when there is nothing to score, as
+    the agents' feedback tables require numbers.
+    """
+    df = pd.DataFrame({"s": signal, "r": forward_return}).dropna()
+    empty = {"annualized_return": 0.0, "information_ratio": 0.0, "max_drawdown": 0.0}
+    if df.empty:
+        return empty
+
+    def spread(g: pd.DataFrame) -> float:
+        if len(g) < min_names:
+            return np.nan
+        q = g["s"].rank(pct=True)
+        return g.loc[q >= 1 - quantile, "r"].mean() - g.loc[q <= quantile, "r"].mean()
+
+    per_date = df.groupby(level="date").apply(spread).dropna()
+    per_date = per_date.loc[pd.Timestamp(start): pd.Timestamp(end)]
+    held = per_date.iloc[::horizon]
+    if held.empty:
+        return empty
+    periods_per_year = 252.0 / horizon
+    sd = held.std()
+    cum = held.cumsum()
+    return {
+        "annualized_return": float(held.mean() * periods_per_year),
+        "information_ratio": (float(held.mean() / sd * np.sqrt(periods_per_year))
+                              if len(held) > 1 and sd > 0 else 0.0),
+        "max_drawdown": float((cum - cum.cummax()).min()),
+    }
+
+
 def newey_west_tstat(series: pd.Series, lags: int) -> float:
     """t-statistic for the mean of ``series`` under HAC (Newey-West) errors.
 

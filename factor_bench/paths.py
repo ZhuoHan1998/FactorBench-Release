@@ -31,6 +31,19 @@ Figures are deliberately NOT covered: see :data:`FIGURE_DIR`.
 Note the signal cache is NOT covered by this: it is ~10 GB of intermediate
 data, it is passed explicitly with ``--signal_cache``, and it should live
 wherever there is space.
+
+Input panels: ``FACTORBENCH_DATA``
+----------------------------------
+The market panels are read from ``data/cache`` unless ``FACTORBENCH_DATA``
+names another directory, e.g. a rebuild on a different universe::
+
+    export FACTORBENCH_DATA=/path/to/panels
+
+Several stages also write *derived* copies of the panel (h5 files in each
+method's own format). By default those sit at fixed in-repo paths and are
+reused if present, which is only safe while there is a single panel source.
+Under an override they move beside the panels they were derived from
+(:func:`panel_derived_dir`), so one universe never reads another's copy.
 """
 
 from __future__ import annotations
@@ -58,6 +71,27 @@ def _resolve_root() -> tuple[Path, str]:
 
 
 OUT_ROOT, _ROOT_SOURCE = _resolve_root()
+
+_DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "cache"
+_DATA_ENV = os.environ.get("FACTORBENCH_DATA")
+
+#: Directory holding the ``<market>.parquet`` panels that ``load_panel`` reads.
+DATA_DIR = Path(_DATA_ENV) if _DATA_ENV else _DEFAULT_DATA_DIR
+DATA_OVERRIDDEN = bool(_DATA_ENV)
+
+
+def panel_derived_dir(default: str | Path, *subdir: str) -> Path:
+    """Where a copy derived from the panels lives.
+
+    ``default`` is the historical location, used unchanged when no
+    ``FACTORBENCH_DATA`` override is active. Under an override the copy goes to
+    ``DATA_DIR/derived/<subdir...>`` instead, because the default locations are
+    shared and reused-if-present: a second universe would otherwise silently
+    evaluate on the first universe's panel.
+    """
+    if DATA_OVERRIDDEN:
+        return DATA_DIR.joinpath("derived", *subdir)
+    return Path(default)
 
 #: Evaluation artefacts: the IC table, and one subdirectory per stage.
 EVAL_DIR = OUT_ROOT / "eval"
@@ -87,4 +121,8 @@ def describe() -> str:
     check is printed rather than left to the reader.
     """
     state = "ok" if IC_TABLE.exists() else "MISSING ic_table.csv"
-    return f"eval artefacts: {EVAL_DIR}  (root from {_ROOT_SOURCE}) [{state}]"
+    data_source = "FACTORBENCH_DATA" if DATA_OVERRIDDEN else "default"
+    return (
+        f"eval artefacts: {EVAL_DIR}  (root from {_ROOT_SOURCE}) [{state}]; "
+        f"panels: {DATA_DIR}  ({data_source})"
+    )

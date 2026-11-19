@@ -46,7 +46,7 @@ import fire
 import numpy as np
 import pandas as pd
 
-from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel
+from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel, restrict_to_universe
 from factor_bench.eval import executors
 from factor_bench.eval.admission import MIN_SCORABLE_DATES
 from factor_bench.paths import IC_TABLE as DEFAULT_IC_TABLE
@@ -127,6 +127,8 @@ def factor_record(factor, run: MiningRun, run_name: str, panel: pd.DataFrame,
     }
     try:
         signal = executors.compute_signal(factor, run.market, panel).reindex(panel.index)
+        # Score a stock only on dates it is in the index (no-op on static panels).
+        signal = restrict_to_universe(signal, panel)
         ic, rank_ic = daily_ic_pair(signal, target)
 
         # Dates where the factor has data but NO cross-sectional spread: every

@@ -82,6 +82,13 @@ def build_composite(signals: dict[str, pd.Series], selected: pd.DataFrame,
                     ic_column: str = "valid.ic") -> tuple[pd.Series, pd.Series]:
     """Combine the selected factors into one composite signal.
 
+    ``selected`` must carry ``sign``, the training-fixed direction from
+    ``ic_table`` (+1/-1). It is applied to each normalised score, so a factor
+    whose training IC was negative enters reversed, matching the direction its
+    validation IC (the selection and ``ic`` weighting key) was measured in.
+    Ridge is unaffected in exact arithmetic -- reversing a column negates its
+    fitted weight -- but equal and IC weighting are not.
+
     Returns (composite, weights). The composite is a plain (date, asset) Series
     on the union index of the normalised inputs.
     """
@@ -94,10 +101,20 @@ def build_composite(signals: dict[str, pd.Series], selected: pd.DataFrame,
         return pd.Series(dtype=float), pd.Series(dtype=float)
     names = list(Z.columns)
 
+    if "sign" not in selected.columns:
+        raise ValueError("build_composite needs the training-fixed `sign` column "
+                         "(from ic_table) to orient each factor")
+    signs = (selected.drop_duplicates("factor").set_index("factor")
+             .loc[names, "sign"].to_numpy(float))
+    if not np.isin(signs, (-1.0, 1.0)).all():
+        raise ValueError(f"`sign` must be +1/-1 for every selected factor, got {signs}")
+    Z *= signs
+
     if config.method == "equal":
         w = np.full(len(names), 1.0 / len(names))
     elif config.method == "ic":
-        ic = selected.set_index("factor").loc[names, ic_column].clip(lower=0).to_numpy(float)
+        ic = (selected.drop_duplicates("factor").set_index("factor")
+              .loc[names, ic_column].clip(lower=0).to_numpy(float))
         w = ic / ic.sum() if ic.sum() > 0 else np.full(len(names), 1.0 / len(names))
     elif config.method == "ridge":
         if target is None or train_mask is None or valid_mask is None:

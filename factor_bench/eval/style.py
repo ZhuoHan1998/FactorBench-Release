@@ -54,7 +54,14 @@ import fire
 import numpy as np
 import pandas as pd
 
-from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel
+from factor_bench.data import (
+    DEFAULT_SPLIT,
+    TARGET,
+    load_panel,
+    restrict_to_universe,
+    universe_key,
+    universe_mask,
+)
 from factor_bench.data.schema import MARKETS
 from factor_bench.eval import executors
 from factor_bench.eval.metrics import newey_west_tstat
@@ -107,8 +114,11 @@ def build_style_panel(panel: pd.DataFrame) -> pd.DataFrame:
     close = panel["close"].unstack("asset").sort_index()
     volume = panel["volume"].unstack("asset").sort_index()
     ret = panel["return_1d"].unstack("asset").sort_index()
+    member = universe_mask(panel).unstack("asset").reindex_like(ret).fillna(False).astype(bool)
 
-    mkt = ret.mean(axis=1)                                   # equal-weight market
+    # Equal-weight market over that date's index members (all assets on a
+    # static panel). Exposures themselves use each stock's full history.
+    mkt = ret.where(member).mean(axis=1)
     cov = ret.rolling(252, min_periods=200).cov(mkt)
     var = mkt.rolling(252, min_periods=200).var()
     beta = cov.div(var, axis=0)
@@ -133,7 +143,9 @@ def build_style_panel(panel: pd.DataFrame) -> pd.DataFrame:
         s = wide.stack()
         s.index = s.index.rename(["date", "asset"])
         out[name] = s.reindex(panel.index)
-    styles = pd.DataFrame(out)
+    # Standardise across that date's members only, so a stock outside the
+    # index neither gets an exposure nor shifts everyone else's.
+    styles = pd.DataFrame(out).where(universe_mask(panel), axis=0)
 
     # Per date: winsorise to the stated percentiles, then standardise. Both are
     # benchmark choices fixed beforehand, not knobs tuned on results.
@@ -188,6 +200,37 @@ def _xs_corr(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return c
 
 
+def _train_signs(cube, target: np.ndarray, train_rows: np.ndarray) -> tuple[np.ndarray, int]:
+    """Per-factor +1/-1 from the sign of mean daily IC over the train rows.
+
+    ``cube`` is (dates, assets, factors) and ``target`` the (dates, assets) target,
+    both NaN wherever the asset is not a member. A date counts for a factor only
+    if the factor is finite on every stock with a target that day. Returns the
+    signs and how many factors had no such date (their sign defaults to +1).
+    """
+    n_fac = cube.shape[2]
+    acc = np.zeros(n_fac)
+    cnt = np.zeros(n_fac)
+    for ti in train_rows:
+        f = np.asarray(cube[ti], dtype=np.float64)
+        y = target[ti].astype(np.float64)
+        ok = np.isfinite(y)
+        if ok.sum() < MIN_OBS_PER_DATE:
+            continue
+        elig = np.where(ok)[0]
+        colok = np.isfinite(f[elig]).all(axis=0)
+        if not colok.any():
+            continue
+        c = _xs_corr(f[elig][:, colok], y[elig])
+        j = np.where(colok)[0]
+        good = np.isfinite(c)
+        acc[j[good]] += c[good]
+        cnt[j[good]] += 1
+    sign = np.where(cnt > 0, np.sign(np.divide(acc, np.maximum(cnt, 1))), 1.0)
+    sign[sign == 0] = 1.0
+    return sign, int((cnt == 0).sum())
+
+
 def _ranks(a: np.ndarray) -> np.ndarray:
     order = np.argsort(a, axis=0, kind="mergesort")
     out = np.empty_like(order, dtype=np.float64)
@@ -224,7 +267,8 @@ def _load_cube(market, entries, signal_cache, panel, win_index, dates, assets):
         meta = cache / f"{market}_signals.json"
         if npy.exists() and meta.exists():
             cached = json.loads(meta.read_text())
-            if cached["names"] == [e["name"] for e in entries]:
+            if (cached["names"] == [e["name"] for e in entries]
+                    and cached.get("universe", "static") == universe_key(panel)):
                 print(f"[style/{market}] reusing cached signals from {npy}")
                 return np.load(npy, mmap_mode="r"), cached["meta"], cached["failures"]
             print(f"[style/{market}] signal cache stale; re-executing")
@@ -240,7 +284,8 @@ def _load_cube(market, entries, signal_cache, panel, win_index, dates, assets):
     t0 = time.time()
     for k, e in enumerate(entries):
         try:
-            sig = executors.compute_signal(e["factor"], market, panel).reindex(win_index)
+            sig = executors.compute_signal(e["factor"], market, panel)
+            sig = restrict_to_universe(sig, panel).reindex(win_index)
             vals = sig.to_numpy(dtype="float64", na_value=np.nan)
             # float32 cube: a value beyond its range casts to +-inf, which is not
             # NaN and would be treated as a real observation downstream. Same
@@ -274,7 +319,12 @@ def build(market: str = "csi300", splits: str = "train,valid,test",
     out_root = Path(out_dir); out_root.mkdir(parents=True, exist_ok=True)
 
     panel = load_panel(market)
-    target_all = TARGET.from_panel(panel)
+    # Target restricted to index members, like the signals in the cube. On a
+    # point-in-time panel the target exists on non-member days but the signals do
+    # not, and the train-sign loop below requires a factor finite on every stock
+    # with a target -- so with an unmasked target no date qualified, every factor
+    # silently got sign +1, and raw/residual IC averaged opposite directions.
+    target_all = restrict_to_universe(TARGET.from_panel(panel), panel)
     entries = []
     for path in sorted(Path(mining_dir).glob("*/*/factors.json")):
         try:
@@ -323,24 +373,10 @@ def build(market: str = "csi300", splits: str = "train,valid,test",
     # sign fixed on TRAIN, exactly as in ic_table: applied unchanged everywhere
     tr = (dates >= pd.Timestamp(DEFAULT_SPLIT.train[0])) & \
          (dates <= pd.Timestamp(DEFAULT_SPLIT.train[1]))
-    acc = np.zeros(n_fac); cnt = np.zeros(n_fac)
-    for ti in np.where(tr)[0]:
-        F = np.asarray(cube[ti], dtype=np.float64)
-        y = Y[ti].astype(np.float64)
-        ok = np.isfinite(y)
-        if ok.sum() < MIN_OBS_PER_DATE:
-            continue
-        elig = np.where(ok)[0]
-        colok = np.isfinite(F[elig]).all(axis=0)
-        if not colok.any():
-            continue
-        c = _xs_corr(F[elig][:, colok], y[elig])
-        j = np.where(colok)[0]
-        good = np.isfinite(c)
-        acc[j[good]] += c[good]
-        cnt[j[good]] += 1
-    sign = np.where(cnt > 0, np.sign(np.divide(acc, np.maximum(cnt, 1))), 1.0)
-    sign[sign == 0] = 1.0
+    sign, n_unsigned = _train_signs(cube, Y, np.where(tr)[0])
+    if n_unsigned:
+        print(f"[style/{market}] WARNING: {n_unsigned} of {n_fac} factors had no usable "
+              "train date; their sign defaults to +1")
 
     for split in want:
         lo, hi = DEFAULT_SPLIT.segment(split)

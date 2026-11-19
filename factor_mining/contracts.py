@@ -13,7 +13,20 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
+
+
+def _null_metrics_to_nan(metrics):
+    if isinstance(metrics, dict):
+        return {k: float("nan") if v is None else v for k, v in metrics.items()}
+    return metrics
+
+
+#: A factor's mining-side metrics. One that could not be computed (e.g. the IC of
+#: a factor with no values on the valid segment) is NaN; JSON has no NaN, so
+#: ``save`` writes it as null, and this reads null back as NaN. Without it, one
+#: such factor made the whole run unreadable and evaluation skipped the run.
+Metrics = Annotated[dict[str, float], BeforeValidator(_null_metrics_to_nan)]
 
 
 class ExpressionFactor(BaseModel):
@@ -28,7 +41,7 @@ class ExpressionFactor(BaseModel):
     grammar: str
     # Optional linear-combination weight when the method emits a weighted pool.
     weight: float | None = None
-    train_metrics: dict[str, float] = Field(default_factory=dict)
+    train_metrics: Metrics = Field(default_factory=dict)
 
 
 class CodeFactor(BaseModel):
@@ -49,7 +62,7 @@ class CodeFactor(BaseModel):
     source: str
     entry_point: str = "factor"
     weight: float | None = None
-    train_metrics: dict[str, float] = Field(default_factory=dict)
+    train_metrics: Metrics = Field(default_factory=dict)
 
 
 Factor = Annotated[Union[ExpressionFactor, CodeFactor], Field(discriminator="type")]

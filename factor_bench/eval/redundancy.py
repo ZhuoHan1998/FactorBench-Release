@@ -47,7 +47,7 @@ import fire
 import numpy as np
 import pandas as pd
 
-from factor_bench.data import DEFAULT_SPLIT, load_panel
+from factor_bench.data import DEFAULT_SPLIT, load_panel, restrict_to_universe, universe_key
 from factor_bench.data.schema import MARKETS
 from factor_bench.eval import executors
 from factor_bench.paths import REDUNDANCY_DIR as OUT_DIR
@@ -210,15 +210,19 @@ def build(market: str = "csi300", splits: str = "train,valid,test",
     if signal_cache:
         cd = _cache_path(signal_cache); cd.mkdir(parents=True, exist_ok=True)
         cache_npy, cache_meta = cd / f"{market}_signals.npy", cd / f"{market}_signals.json"
+    ukey = universe_key(panel)
     if cache_npy and cache_npy.exists() and cache_meta.exists():
         cached = json.loads(cache_meta.read_text())
-        if cached["names"] == [e["name"] for e in entries]:
+        # Caches from before the universe key existed were all built on static panels.
+        if (cached["names"] == [e["name"] for e in entries]
+                and cached.get("universe", "static") == ukey):
             cube = np.load(cache_npy, mmap_mode="r")
             meta = cached["meta"]; failures = cached["failures"]
             print(f"[redundancy/{market}] reusing cached signals ({cube.shape[2]} factors)")
             return _correlate(cube, meta, failures, dates, market, want_splits,
                               Path(out_dir), len(entries))
-        print(f"[redundancy/{market}] signal cache stale (factor set changed); re-executing")
+        print(f"[redundancy/{market}] signal cache stale (factor set or universe changed); "
+              "re-executing")
 
     cube = np.full((len(dates), len(assets), len(entries)), np.nan, dtype=np.float32)
     meta, failures = [], []
@@ -226,7 +230,8 @@ def build(market: str = "csi300", splits: str = "train,valid,test",
     n_overflow, overflow_factors = 0, set()
     for k, e in enumerate(entries):
         try:
-            sig = executors.compute_signal(e["factor"], market, panel).reindex(win_index)
+            sig = executors.compute_signal(e["factor"], market, panel)
+            sig = restrict_to_universe(sig, panel).reindex(win_index)
             vals = sig.to_numpy(dtype="float64", na_value=np.nan)
             # The cube is float32. A value outside its range casts to +-inf, and
             # inf is NOT NaN: _corr_matrix counts it as a valid observation and
@@ -268,6 +273,7 @@ def build(market: str = "csi300", splits: str = "train,valid,test",
     if cache_npy:
         np.save(cache_npy, cube)
         cache_meta.write_text(json.dumps({"names": [e["name"] for e in entries],
+                                          "universe": ukey,
                                           "meta": meta, "failures": failures}))
         print(f"[redundancy/{market}] signals cached -> {cache_npy} "
               f"({cache_npy.stat().st_size/1e9:.1f} GB)")

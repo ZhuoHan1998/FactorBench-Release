@@ -50,9 +50,13 @@ Per-RQ application
   shorter (the 252-day beta warm-up), so RQ3 is a subset by construction -- but
   it is now a *stated* subset of one rule rather than an independent rule that
   happens to differ.
-- **RQ4**: ``admitted`` AND the selection procedure's own stricter steps
-  (positive validation IC, the correlation ceiling). Strictly nested, so every
-  RQ4 factor is an RQ1 factor.
+- **RQ4**: NOT ``admitted``. Portfolio eligibility must be decidable before the
+  test period, and ``admitted`` requires scorable test dates, so RQ4 applies
+  the same >= ``MIN_SCORABLE_DATES`` bar to train and validation only, plus the
+  selection procedure's own steps (positive validation IC, the correlation
+  ceiling); see :class:`factor_bench.portfolio.selection.SelectionConfig`. The
+  price: RQ4 is no longer strictly nested in RQ1 -- a factor unscorable in test
+  can be traded (it then holds nothing on those dates) while RQ1 excludes it.
 """
 
 from __future__ import annotations

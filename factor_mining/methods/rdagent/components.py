@@ -14,6 +14,17 @@ replace only the two qlib-coupled evaluation components:
 
 Feedback deliberately sees train/valid only — never test.
 
+The official proposal prompts (``scenarios/qlib/prompts.yaml``:
+``hypothesis_and_feedback`` and ``last_hypothesis_and_feedback``) print each past
+trial's ``exp.result`` rows ``IC``, ``1day.excess_return_without_cost.annualized_return``
+and ``1day.excess_return_without_cost.max_drawdown``. The runner fills those rows
+too, on the VALID segment: ``IC`` is the valid IC of the combined signal, and the
+two return rows are its top-minus-bottom quintile portfolio held for the TARGET
+horizon (20 trading days, non-overlapping), the same quantities AlphaAgent and
+QuantaAlpha are steered by. The "1day" names are the official template's and are
+kept so the template runs unmodified. Without these rows the template fails on
+the second loop and the run stops.
+
 This module is imported inside the RD-Agent virtualenv by
 ``rdagent.core.utils.import_class``; keep imports limited to pandas/numpy,
 rdagent, and factor_bench.
@@ -41,8 +52,14 @@ from rdagent.utils import convert2bool
 from rdagent.utils.agent.tpl import T
 
 from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel
+from factor_bench.eval.metrics import long_short_horizon_metrics
 
 IMPORTANT_METRICS = ["train.IC", "train.RankIC", "valid.IC", "valid.RankIC"]
+# Rows the official proposal templates read from each past trial's result.
+TEMPLATE_IC = "IC"
+TEMPLATE_ANN_RETURN = "1day.excess_return_without_cost.annualized_return"
+TEMPLATE_MAX_DRAWDOWN = "1day.excess_return_without_cost.max_drawdown"
+TEMPLATE_METRICS = [TEMPLATE_IC, TEMPLATE_ANN_RETURN, TEMPLATE_MAX_DRAWDOWN]
 
 _MARKET_ENV = "FACTORBENCH_MARKET"
 
@@ -99,13 +116,23 @@ def _segment_metrics(signal: pd.Series, target: pd.Series) -> dict[str, float]:
     return out
 
 
+def _template_metrics(signal: pd.Series, target: pd.Series,
+                      segment_metrics: dict[str, float]) -> dict[str, float]:
+    """The official template's rows, on the valid segment and the target horizon."""
+    ls = long_short_horizon_metrics(signal, target, *DEFAULT_SPLIT.valid,
+                                    horizon=TARGET.horizon_days)
+    return {TEMPLATE_IC: segment_metrics["valid.IC"],
+            TEMPLATE_ANN_RETURN: ls["annualized_return"],
+            TEMPLATE_MAX_DRAWDOWN: ls["max_drawdown"]}
+
+
 def _zscore_by_day(signal: pd.Series) -> pd.Series:
     grouped = signal.groupby(level="date")
     return (signal - grouped.transform("mean")) / grouped.transform("std")
 
 
 def _zero_result() -> pd.Series:
-    return pd.Series({m: 0.0 for m in IMPORTANT_METRICS}, name="result")
+    return pd.Series({m: 0.0 for m in IMPORTANT_METRICS + TEMPLATE_METRICS}, name="result")
 
 
 class FactorBenchFactorRunner(Developer[QlibFactorExperiment]):
@@ -151,7 +178,9 @@ class FactorBenchFactorRunner(Developer[QlibFactorExperiment]):
             raise FactorEmptyError("No generated factor produced values on the panel")
 
         combined = pd.concat(signals, axis=1).mean(axis=1)
-        exp.result = pd.Series(_segment_metrics(combined, target), name="result")
+        metrics = _segment_metrics(combined, target)
+        exp.result = pd.Series({**metrics, **_template_metrics(combined, target, metrics)},
+                               name="result")
         # Stash per-factor metrics for factors.json harvesting (loop.py).
         exp.factorbench_metrics = per_factor_metrics  # type: ignore[attr-defined]
         logger.info(f"[factorbench-runner] combined result:\n{exp.result}")

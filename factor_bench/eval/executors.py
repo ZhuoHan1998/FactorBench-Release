@@ -39,6 +39,7 @@ import pandas as pd
 
 from factor_bench.data import DEFAULT_SPLIT, load_panel
 from factor_bench.data.schema import FIELDS
+from factor_bench.paths import panel_derived_dir
 
 _CODE_TIMEOUT_SECONDS = 600
 
@@ -245,7 +246,7 @@ def _dsl_input_h5(method: str, market: str, python_path: Path) -> Path:
     cannot read HDF5 datetime indexes written by this repo's pandas 3."""
     key = f"{method}:{market}"
     if key not in _H5_CACHE:
-        data_root = _REPO_ROOT / "out" / "mining" / method / "data"
+        data_root = panel_derived_dir(_REPO_ROOT / "out" / "mining" / method / "data", method)
         path = data_root / market / "full" / "daily_pv.h5"
         if not path.exists():
             prep = subprocess.run(
@@ -253,7 +254,8 @@ def _dsl_input_h5(method: str, market: str, python_path: Path) -> Path:
                     str(python_path),
                     "-c",
                     f"from factor_mining.methods.{method}.data_prep import "
-                    f"prepare_data_folders; prepare_data_folders({market!r})",
+                    f"prepare_data_folders; prepare_data_folders({market!r}, "
+                    f"{str(data_root)!r})",
                 ],
                 cwd=_REPO_ROOT,
                 capture_output=True,
@@ -324,7 +326,7 @@ def _code_signal(
     market: str,
     panel: pd.DataFrame,
     python_bin: str | None = None,
-    cache_dir: Path = Path("out/eval_cache"),
+    cache_dir: Path | None = None,
 ) -> pd.Series:
     if entry_point != "__main__":
         raise NotImplementedError(
@@ -343,6 +345,8 @@ def _code_signal(
                 "own pandas pin — create that venv first"
             )
         python_bin = str(_RDAGENT_PYTHON)
+    if cache_dir is None:
+        cache_dir = panel_derived_dir("out/eval_cache", "eval_cache")
     h5 = _code_input_h5(market, panel, cache_dir)
     with tempfile.TemporaryDirectory(prefix="factor_eval_") as tmp:
         workspace = Path(tmp)

@@ -21,6 +21,7 @@ from pathlib import Path
 import pandas as pd
 
 from factor_bench.data import DEFAULT_SPLIT, load_panel
+from factor_bench.paths import panel_derived_dir
 
 # Official variable set (prompts_alphaagent.yaml): panel column -> $column.
 _EXPORT_COLUMNS = {
@@ -48,9 +49,11 @@ Load with `pd.read_hdf("daily_pv.h5", key="data")`.
 
 
 def prepare_data_folders(
-    market: str, base_dir: str | Path = "out/mining/alphaagent/data"
+    market: str, base_dir: str | Path | None = None
 ) -> tuple[Path, Path]:
     """Write full + debug data folders for one market. Returns absolute paths."""
+    if base_dir is None:
+        base_dir = panel_derived_dir("out/mining/alphaagent/data", "alphaagent")
     panel = load_panel(market)[list(_EXPORT_COLUMNS)].rename(columns=_EXPORT_COLUMNS)
     panel.index = panel.index.rename(["datetime", "instrument"])
 

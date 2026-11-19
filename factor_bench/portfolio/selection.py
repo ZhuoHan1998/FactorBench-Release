@@ -6,7 +6,8 @@ rather than padded.
 
 Procedure (all thresholds fixed before any test evaluation):
 
-1. Drop invalid, constant and poorly covered factors.
+1. Drop invalid, constant and poorly covered factors (coverage judged on train
+   and validation only; see ``SelectionConfig.require_admitted``).
 2. Rank survivors by **validation** IC, using their training-fixed direction.
 3. Optionally keep only factors with positive validation IC
    (``require_positive_ic``, **off by default** -- see the field's note for the
@@ -36,14 +37,26 @@ class SelectionConfig:
 
     max_correlation: float = 0.8      # step 4 admission threshold
     cap: int | None = None            # None = full pool; an int = fixed-size
-    min_valid_dates: int = 100        # step 1 coverage floor (validation only)
-    # Step 1 also requires the benchmark-wide `admitted` flag when the column is
-    # present, so RQ4's pool is strictly nested inside RQ1's. Without it, a
-    # factor with three scorable TEST dates was selectable, because selection
-    # only ever looks at validation -- 45 such factors in the September table.
-    require_admitted: bool = True
+    # Step 1 coverage floors: scorable dates in train and validation, the same
+    # bar as the benchmark-wide admission rule (MIN_SCORABLE_DATES) minus its
+    # test leg. Eligibility must be decidable when the portfolio is formed, so
+    # nothing about the test period may enter it. A factor that later goes
+    # unscorable in test simply contributes nothing on those dates -- a test
+    # outcome, recorded as such, not a reason to have excluded it beforehand.
+    min_train_dates: int = 100
+    min_valid_dates: int = 100
+    # The benchmark-wide `admitted` flag ALSO requires >= 100 scorable TEST
+    # dates, so requiring it made eligibility depend on test-period
+    # availability (a test-period leak). Off; True reproduces the RQ4
+    # results built before the fix. Consequence of False: RQ4's pool is no
+    # longer strictly nested inside RQ1's -- a factor unscorable in test is
+    # eligible here but absent from RQ1's paired train-vs-test statistics.
+    require_admitted: bool = False
     # Step 3, OFF by default. Requiring positive validation IC is a real filter,
-    # not a formality: without it the equal-weight composite's mean test rank-IC
+    # not a formality. (The figures below were measured before build_composite
+    # applied each factor's training direction, so equal weighting then added
+    # negative-train-IC factors reversed; re-measure before quoting them.)
+    # Without it the equal-weight composite's mean test rank-IC
     # falls from 0.0222 to 0.0010 across 131 runs, and six of nine mining methods
     # produce a NEGATIVE composite. That is the RQ1 finding in portfolio form --
     # the train-fixed direction persists into validation only ~53% of the time,
@@ -81,6 +94,8 @@ def select_factors(
 
     # step 1 -- validity
     ok = df[ic].notna()
+    if "train.n_dates" in df:
+        ok &= df["train.n_dates"] >= config.min_train_dates
     if "valid.n_dates" in df:
         ok &= df["valid.n_dates"] >= config.min_valid_dates
     if "status" in df:

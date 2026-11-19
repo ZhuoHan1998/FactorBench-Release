@@ -8,7 +8,7 @@ FactorBench covers the full alpha factor workflow — mining signals from price/
 
 ## Highlights
 
-- **Across 5 markets.** Pre-cached universes spanning US, Hong Kong, China A-shares, UK, and Japan (`sp100`, `hsi`, `csi300`, `ftse100`, `nikkei225`), so factors are tested out-of-region rather than on a single market.
+- **Across 5 markets.** Point-in-time universes spanning US, Hong Kong, China A-shares, UK, and Japan (`sp100`, `hsi`, `csi300`, `ftse100`, `nikkei225`): on each date only that day's index members are mined, scored, and traded, so factors are tested out-of-region and without survivorship bias from fixed constituent lists.
 
 - **Across many mining methods.** 9 evaluated methods spanning multiple **search paradigms** (GP, RL, Generation-based and LLM-driven) and two **output forms** — expression trees (ASTs) and executable Python code — all run through a *shared evaluation contract* so tree-based and code-based factors are directly comparable.
 
@@ -155,16 +155,18 @@ what makes numbers comparable across methods.
 
 | Piece | Definition | Where |
 |-------|------------|-------|
-| Split | train `2017-01-01…2021-12-31`, valid `2022-01-01…2023-12-31`, test `2024-01-01…2025-10-31` | `factor_bench/data/splits.py` |
+| Universe | Point-in-time index membership 2016-12-31…2025-10-31 (`data/index_membership.csv`, sources in `data/download_all.py`). Mining panels contain only member rows, and stocks first joining after the validation period are excluded from mining; evaluation and portfolios use a stock only while it is a member | `factor_bench/data/loader.py` |
+| Split | train `2017-01-01…2021-11-30`, valid `2022-01-01…2023-11-29`, test `2024-01-01…2025-10-31`. Train and valid end early so that no 20-day label overlaps the next segment | `factor_bench/data/splits.py` |
 | Target | 20-trading-day forward return, `close[t+20] / close[t] - 1` (matches AlphaGen's official target) | `factor_bench/data/target.py` |
 | Execution | Each grammar runs under its **own** official evaluator and dependency pins (AlphaGen compiler, AlphaForge / AlphaSAGE / AlphaAgent parsers, RD-Agent's script contract), in a subprocess where versions conflict | `factor_bench/eval/executors.py` |
-| Admission | A factor counts only if it executed and has ≥ 100 dates with a defined cross-sectional IC in **every** segment. Decided once and shared by all research questions | `factor_bench/eval/admission.py` |
+| Admission | A factor counts only if it executed and has ≥ 100 dates with a defined cross-sectional IC in **every** segment. Decided once and shared by the factor- and pool-level analyses; portfolio eligibility uses train and valid coverage only | `factor_bench/eval/admission.py` |
 
 #### Evaluation stages
 
 | Stage | Question | Output | Module |
 |-------|----------|--------|--------|
 | Audit | Does the factor execute, and is the result a usable signal (not all-NaN, not constant across stocks, aligned to the panel)? | per-method audit CSV | `factor_bench.eval.audit` |
+| Look-ahead | Does it read the future? Prices and volume after a cut date are perturbed; the factor's values before the cut must not change | `lookahead.csv` | `factor_bench.eval.lookahead` |
 | IC table | Does it predict? IC / Rank IC / ICIR per segment, HAC t-stats, scorable-date counts, admission flag | `ic_table.csv` | `factor_bench.eval.ic_table` |
 | Redundancy | Do factors rank stocks the same way? Pairwise cross-sectional Spearman and Pearson correlation matrices, per market and split | `.npz` matrices | `factor_bench.eval.redundancy` |
 | Style neutralisation | Is the IC just known style premia? Raw vs residual IC after regressing out five styles | per-factor style metrics | `factor_bench.eval.style` |
@@ -195,23 +197,46 @@ fundamentals source.
 
 Everything that could leak is frozen before the test period:
 
-- **Selection** ranks factors by *validation* IC and greedily drops any whose
-  absolute validation-split correlation with an already accepted factor is ≥ 0.8.
-- **Combination** puts each factor on a per-date percentile-rank scale, then
-  weights it `equal`, `ic` (positive validation IC), or `ridge` (fit on train,
-  penalty chosen on validation).
+- **Selection** keeps factors with ≥ 100 scorable dates in train and valid (test
+  coverage plays no role), ranks them by *validation* IC, and greedily drops any
+  whose absolute validation-split correlation with an already accepted factor is ≥ 0.8.
+- **Combination** puts each factor on a per-date percentile-rank scale, signed by
+  its training-period direction, then weights it `equal`, `ic` (positive
+  validation IC), or `ridge` (fit on train, penalty chosen on validation).
 - **Backtest** runs on test with next-day execution, top/bottom 20% quantiles,
-  a 5-day rebalance by default (1 and 20 also run), 10 bps one-way cost on
-  traded notional, turnover measured against drifted holdings, and a 50 bps/yr
-  short borrow for long-short. Both long-only and long-short are reported.
+  a 20-day rebalance by default (1, 5, 10 and 15 also run), 10 bps one-way cost
+  on traded notional (0–50 bps also run), turnover measured against drifted
+  holdings, and a 50 bps/yr short borrow for long-short. Both long-only and
+  long-short are reported; long-only is also measured against an equal-weight
+  portfolio of the same day's index members.
+- **Inference** for benchmark-relative returns uses a circular block bootstrap
+  that resamples the same calendar blocks in every market, with Holm-adjusted
+  p-values (`factor_bench/portfolio/inference.py`).
 
 #### Running it
+
+Build the point-in-time panels first. This writes evaluation panels to
+`--cache_dir` and mining panels (member rows only) to `--cache_dir/mining`:
+
+```bash
+python data/download_all.py --universe pit --cache_dir /path/to/panels
+```
+
+Point mining at the mining panels and evaluation at the evaluation panels;
+`FACTORBENCH_REQUIRE_UNIVERSE` makes every load refuse a panel built for another
+universe:
+
+```bash
+FACTORBENCH_DATA=/path/to/panels/mining FACTORBENCH_REQUIRE_UNIVERSE=pit-mining scripts/train_gp.sh
+export FACTORBENCH_DATA=/path/to/panels FACTORBENCH_REQUIRE_UNIVERSE=pit   # for evaluation
+```
 
 Mining runs write `out/mining/<method>/<run>/factors.json`. Evaluation outputs go
 under `$FACTORBENCH_OUT/eval/` (default `out/eval/`; see `factor_bench/paths.py`).
 
 ```bash
 python -m factor_bench.eval.audit                                   # executability
+python -m factor_bench.eval.lookahead run                           # look-ahead test
 python -m factor_bench.eval.ic_table build                          # IC table
 python -m factor_bench.eval.redundancy build --market all \
     --signal_cache /path/to/signals                                 # correlation matrices

@@ -11,10 +11,15 @@ labels with honestly-computed FactorBench quantities (VALID segment only —
 feedback never sees test):
 
 - ``IC``                       — mean daily IC of the combined signal vs the shared target
-- ``1day.excess_return_without_cost.annualized_return`` — annualized long-short
-  (top/bottom quintile) next-day return of the combined signal
+- ``1day.excess_return_without_cost.annualized_return`` — annualized return of
+  the top-minus-bottom quintile portfolio held for the TARGET horizon (20
+  trading days), non-overlapping formation dates
 - ``1day.excess_return_without_cost.information_ratio`` — its IR
 - ``1day.excess_return_without_cost.max_drawdown``      — its max drawdown
+
+The "1day" label names are the official contract and are kept so the summarizer
+runs unmodified; the values are on the 20-day horizon so that every number the
+agent is steered by matches the target it is scored on.
 
 This module is imported inside the AlphaAgent virtualenv (pandas 1.5); keep
 imports limited to pandas/numpy, alphaagent, and factor_bench.
@@ -31,6 +36,7 @@ from alphaagent.scenarios.qlib.developer.factor_runner import QlibFactorRunner
 from alphaagent.scenarios.qlib.experiment.factor_experiment import QlibFactorExperiment
 
 from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel
+from factor_bench.eval.metrics import long_short_horizon_metrics
 
 OFFICIAL_METRIC_LABELS = [
     "1day.excess_return_without_cost.max_drawdown",
@@ -58,21 +64,6 @@ def _daily_ic(signal: pd.Series, target: pd.Series, method: str = "pearson") -> 
     if df.empty:
         return pd.Series(dtype=float)
     return df.groupby(level="date").apply(lambda g: g["s"].corr(g["t"], method=method))
-
-
-def _long_short_daily_returns(signal: pd.Series, fwd_1d: pd.Series) -> pd.Series:
-    """Top-minus-bottom quintile next-day return, per date."""
-    df = pd.DataFrame({"s": signal, "r": fwd_1d}).dropna()
-    if df.empty:
-        return pd.Series(dtype=float)
-
-    def one_day(g: pd.DataFrame) -> float:
-        if len(g) < 10:
-            return np.nan
-        q = g["s"].rank(pct=True)
-        return g.loc[q >= 0.8, "r"].mean() - g.loc[q <= 0.2, "r"].mean()
-
-    return df.groupby(level="date").apply(one_day).dropna()
 
 
 def _valid_segment(series: pd.Series) -> pd.Series:
@@ -108,9 +99,6 @@ class FactorBenchFactorRunner(QlibFactorRunner):
 
         panel = load_panel(market)
         target = TARGET.from_panel(panel)
-        # Next-day return for the long-short feedback metrics (no lookahead in
-        # signal: signal at t is paired with the t -> t+1 close-to-close return).
-        fwd_1d = panel["forward_return_1d"]
 
         per_factor: dict[str, dict[str, float]] = {}
         signals = []
@@ -128,11 +116,9 @@ class FactorBenchFactorRunner(QlibFactorRunner):
 
         combined = pd.concat(signals, axis=1).mean(axis=1)
         ic = _valid_segment(_daily_ic(combined, target)).mean()
-        ls = _valid_segment(_long_short_daily_returns(combined, fwd_1d))
-        ann = float(ls.mean() * 252) if len(ls) else 0.0
-        ir = float(ls.mean() / ls.std() * np.sqrt(252)) if len(ls) > 1 and ls.std() > 0 else 0.0
-        cum = ls.cumsum()
-        mdd = float((cum - cum.cummax()).min()) if len(ls) else 0.0
+        ls = long_short_horizon_metrics(combined, target, *DEFAULT_SPLIT.valid,
+                                        horizon=TARGET.horizon_days)
+        ann, ir, mdd = ls["annualized_return"], ls["information_ratio"], ls["max_drawdown"]
 
         exp.result = pd.Series(
             {

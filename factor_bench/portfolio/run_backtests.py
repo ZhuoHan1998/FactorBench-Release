@@ -28,7 +28,7 @@ import fire
 import numpy as np
 import pandas as pd
 
-from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel
+from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel, universe_key, universe_mask
 from factor_bench.data.schema import MARKETS
 from factor_bench.eval.metrics import newey_west_tstat
 from factor_bench.eval.style import MIN_OBS_PER_DATE, build_style_panel
@@ -249,12 +249,17 @@ def _cache_path(signal_cache):
     return Path(signal_cache)
 
 
-def _load_cache(signal_cache: Path, market: str):
+def _load_cache(signal_cache: Path, market: str, ukey: str = "static"):
     npy, meta = signal_cache / f"{market}_signals.npy", signal_cache / f"{market}_signals.json"
     if not (npy.exists() and meta.exists()):
         raise SystemExit(f"no signal cache for {market} at {signal_cache}; run "
                          "factor_bench.eval.redundancy build --signal_cache first")
     info = json.loads(meta.read_text())
+    cached_key = info.get("universe", "static")
+    if cached_key != ukey:
+        raise SystemExit(f"signal cache for {market} at {signal_cache} was built on universe "
+                         f"{cached_key!r}, but the panel is {ukey!r}; rebuild it with "
+                         "factor_bench.eval.redundancy build --signal_cache")
     return np.load(npy, mmap_mode="r"), pd.DataFrame(info["meta"])
 
 
@@ -283,7 +288,7 @@ def build(market: str = "csi300", signal_cache: str = "", mining_dir: str = "out
     target = TARGET.from_panel(panel)
     ret_wide = panel["return_1d"].unstack("asset").sort_index()
 
-    cube, meta = _load_cache(_cache_path(signal_cache), market)
+    cube, meta = _load_cache(_cache_path(signal_cache), market, universe_key(panel))
     corr, cix = _corr_lookup(market, Path(red_dir))
     ict = pd.read_csv(ic_table)
     ict = ict[ict["market"] == market]
@@ -307,7 +312,11 @@ def build(market: str = "csi300", signal_cache: str = "", mining_dir: str = "out
     test_dates = dates[(dates >= pd.Timestamp(DEFAULT_SPLIT.test[0])) &
                        (dates <= pd.Timestamp(DEFAULT_SPLIT.test[1]))]
     ret_test = ret_wide.reindex(index=test_dates, columns=assets).fillna(0.0)
-    bench = ret_test.mean(axis=1)            # equal-weight universe benchmark
+    member_test = (universe_mask(panel).unstack("asset")
+                   .reindex(index=test_dates, columns=assets).fillna(False).astype(bool))
+    # Equal-weight benchmark over that day's index members (every asset on a
+    # static panel, which reproduces the original benchmark exactly).
+    bench = ret_test.where(member_test).mean(axis=1)
 
     # One style panel per market, identical for every method and composite --
     # the same panel RQ3 uses, so the two are directly comparable.

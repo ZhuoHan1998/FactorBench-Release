@@ -18,7 +18,7 @@ from pathlib import Path
 import fire
 import pandas as pd
 
-from factor_bench.data import TARGET, load_panel
+from factor_bench.data import TARGET, load_panel, restrict_to_universe
 from factor_bench.eval.executors import FactorExecutionError, compute_signal
 from factor_bench.eval.metrics import segment_metrics
 from factor_mining.contracts import MiningRun
@@ -41,7 +41,7 @@ def evaluate_run(path: str | Path) -> pd.DataFrame:
         }
         try:
             signal = compute_signal(factor, run.market, panel)
-            signal = signal.reindex(panel.index)
+            signal = restrict_to_universe(signal.reindex(panel.index), panel)
             row.update(segment_metrics(signal, target))
             # Fidelity check: the method's own in-search train IC, when it
             # reported one, should be close to ours (definitions differ

@@ -10,7 +10,10 @@ Metrics are computed on the VALID segment only — feedback and evolutionary
 selection never see test. The result Series carries the label set that both
 consumers expect: the evolution controller ranks trajectories by "Rank IC"
 (alias-mapped to RankIC, success = RankIC > 0), and the feedback prompt reads
-"IC" + the three ``1day.excess_return_without_cost.*`` labels.
+"IC" + the three ``1day.excess_return_without_cost.*`` labels. Those three keep
+their official names but are computed on the 20-day TARGET horizon (top-minus-
+bottom quintile held 20 trading days, non-overlapping), so every number the
+agent sees matches the target it is scored on.
 
 This module is imported inside the QuantaAlpha virtualenv (pandas<3); keep
 imports limited to pandas/numpy, quantaalpha, and factor_bench.
@@ -21,7 +24,6 @@ from __future__ import annotations
 import os
 import subprocess
 
-import numpy as np
 import pandas as pd
 from quantaalpha.core.exception import FactorEmptyError
 from quantaalpha.factors.coder.config import FACTOR_COSTEER_SETTINGS
@@ -30,6 +32,7 @@ from quantaalpha.factors.runner import QlibFactorRunner
 from quantaalpha.log import logger
 
 from factor_bench.data import DEFAULT_SPLIT, TARGET, load_panel
+from factor_bench.eval.metrics import long_short_horizon_metrics
 
 RESULT_LABELS = [
     "IC",
@@ -94,20 +97,6 @@ def _daily_ic(signal: pd.Series, target: pd.Series, method: str = "pearson") -> 
     return df.groupby(level="date").apply(lambda g: g["s"].corr(g["t"], method=method))
 
 
-def _long_short_daily_returns(signal: pd.Series, fwd_1d: pd.Series) -> pd.Series:
-    df = pd.DataFrame({"s": signal, "r": fwd_1d}).dropna()
-    if df.empty:
-        return pd.Series(dtype=float)
-
-    def one_day(g: pd.DataFrame) -> float:
-        if len(g) < 10:
-            return np.nan
-        q = g["s"].rank(pct=True)
-        return g.loc[q >= 0.8, "r"].mean() - g.loc[q <= 0.2, "r"].mean()
-
-    return df.groupby(level="date").apply(one_day).dropna()
-
-
 def _valid(series: pd.Series) -> pd.Series:
     start, end = DEFAULT_SPLIT.valid
     return series.loc[pd.Timestamp(start) : pd.Timestamp(end)]
@@ -135,7 +124,6 @@ class FactorBenchFactorRunner(QlibFactorRunner):
 
         panel = load_panel(market)
         target = TARGET.from_panel(panel)
-        fwd_1d = panel["forward_return_1d"]
 
         per_factor: dict[str, dict[str, float]] = {}
         signals = []
@@ -154,28 +142,22 @@ class FactorBenchFactorRunner(QlibFactorRunner):
         combined = pd.concat(signals, axis=1).mean(axis=1)
         ic_series = _valid(_daily_ic(combined, target))
         ric_series = _valid(_daily_ic(combined, target, "spearman"))
-        ls = _valid(_long_short_daily_returns(combined, fwd_1d))
+        ls = long_short_horizon_metrics(combined, target, *DEFAULT_SPLIT.valid,
+                                        horizon=TARGET.horizon_days)
 
         def _ir(series: pd.Series) -> float:
             ok = len(series) > 1 and series.std() > 0
             return float(series.mean() / series.std()) if ok else 0.0
 
-        cum = ls.cumsum()
         exp.result = pd.Series(
             {
                 "IC": float(ic_series.mean()) if len(ic_series) else 0.0,
                 "ICIR": _ir(ic_series),
                 "Rank IC": float(ric_series.mean()) if len(ric_series) else 0.0,
                 "Rank ICIR": _ir(ric_series),
-                "1day.excess_return_without_cost.annualized_return": (
-                    float(ls.mean() * 252) if len(ls) else 0.0
-                ),
-                "1day.excess_return_without_cost.information_ratio": (
-                    _ir(ls) * float(np.sqrt(252)) if len(ls) else 0.0
-                ),
-                "1day.excess_return_without_cost.max_drawdown": (
-                    float((cum - cum.cummax()).min()) if len(ls) else 0.0
-                ),
+                "1day.excess_return_without_cost.annualized_return": ls["annualized_return"],
+                "1day.excess_return_without_cost.information_ratio": ls["information_ratio"],
+                "1day.excess_return_without_cost.max_drawdown": ls["max_drawdown"],
             },
             name="0",
         )
